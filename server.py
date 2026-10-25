@@ -27,6 +27,7 @@ Hermes connects to  https://<public-host>/sse  with header
 """
 from __future__ import annotations
 
+import csv
 import io
 import json
 import os
@@ -278,6 +279,54 @@ async def km_owner(code: str) -> dict:
                 "owner_inn": p["owner_inn"], "owner_name": p["owner_name"],
                 "product_name": p["product_name"], "status": p["status"],
                 "status_label": p["status_label"]}
+    return await _in_thread(_impl)
+
+
+@mcp.tool()
+async def km_owners_table(codes: list[str]) -> dict:
+    """Look up the OWNER of many KM codes and return a ready-to-save table.
+
+    Built for the "Excel in → Excel out" flow: give it the list of codes and
+    it returns both `rows` (structured) and `csv` (a full CSV string with a
+    header row, UTF-8). Save `csv` straight to a .csv/.xlsx — no reformatting.
+
+    Columns: Kod, GTIN, Mahsulot, Seriya, Status, Status (izoh), Egasi INN,
+    Egasi nomi. Up to 300 codes per call (ASL is ~1 request per code, so large
+    batches are slow and rate-limited — chunk if you have more)."""
+    def _impl() -> dict:
+        err = _creds_ok()
+        if err:
+            return {"ok": False, "error": err}
+        clean = [c.strip() for c in codes if c and c.strip()][:300]
+        if not clean:
+            return {"ok": False, "error": "Kamida bitta KM kod kiriting"}
+
+        headers = ["Kod", "GTIN", "Mahsulot", "Seriya", "Status",
+                   "Status (izoh)", "Egasi INN", "Egasi nomi"]
+        rows: list[dict] = []
+        for c in clean:
+            det = _code_detail(c)
+            if not det.get("ok"):
+                rows.append({"Kod": c, "GTIN": "", "Mahsulot": "", "Seriya": "",
+                             "Status": "", "Status (izoh)": "", "Egasi INN": "",
+                             "Egasi nomi": f"XATO: {det.get('error', '')}"})
+            else:
+                p = _parse_code(det["raw"], c)
+                rows.append({
+                    "Kod": p["code"], "GTIN": p["gtin"],
+                    "Mahsulot": p["product_name"], "Seriya": p["product_series"],
+                    "Status": p["status"], "Status (izoh)": p["status_label"],
+                    "Egasi INN": p["owner_inn"], "Egasi nomi": p["owner_name"],
+                })
+            time.sleep(0.25)
+
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=headers)
+        w.writeheader()
+        w.writerows(rows)
+        found = sum(1 for r in rows if r["Status"])
+        return {"ok": True, "total": len(rows), "found": found,
+                "columns": headers, "rows": rows, "csv": buf.getvalue()}
     return await _in_thread(_impl)
 
 

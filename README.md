@@ -4,13 +4,14 @@ A small, **standalone** MCP server (SSE over HTTP, bearer-auth) that lets an AI
 agent query the **ASL Belgisi / xTrace** track-and-trace API. No dependency on
 the TracePro platform — its own tiny ASL client, credentials from env.
 
-## Tools (5)
+## Tools (6)
 
 | Tool | Answers |
 |---|---|
 | `gtin_ostatok(gtin, …)` | **how much of a product remains** — stock summary by status/owner/series |
-| `km_info(codes[])` | full KM details: owner, product, status, aggregation, dates |
+| `km_info(codes[])` | full KM details: owner, product, status, aggregation, dates (≤50) |
 | `km_owner(code)` | quick **current owner** of one KM code |
+| `km_owners_table(codes[])` | owners of many codes as **ready-to-save CSV** + rows — for "Excel in → Excel out" (≤300) |
 | `sscc_contents(sscc)` | child KM codes inside a box + ownership verdict |
 | `mod_list()` | the company's MOD / business-place list |
 
