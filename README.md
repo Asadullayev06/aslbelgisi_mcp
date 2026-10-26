@@ -32,7 +32,7 @@ you trust. For a personal agent this is the intended, flexible mode.)
 | `MCP_AUTH_TOKEN` | **required** — bearer token Hermes must send |
 | `ASL_INN` | *optional* default company INN (if not passed per call) |
 | `ASL_API_KEY` | *optional* default API key (if not passed per call) |
-| `ASL_API_BASE` | ASL base URL (default `https://aslbelgisi.uz`) |
+| `ASL_API_BASE` | ASL base URL (default `https://xtrace.aslbelgisi.uz` — valid cert) |
 | `MCP_HOST` / `MCP_PORT` | bind (default `0.0.0.0` / `8900`) |
 
 ## Run

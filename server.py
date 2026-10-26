@@ -41,7 +41,10 @@ import requests
 from mcp.server.fastmcp import FastMCP
 
 # ──────────────────────────── config (env) ───────────────────────────────
-ASL_BASE = os.environ.get("ASL_API_BASE", "https://aslbelgisi.uz").rstrip("/")
+# Use xtrace.aslbelgisi.uz (valid TLS cert) — the bare aslbelgisi.uz host's
+# certificate is currently expired, which fails every call with
+# CERTIFICATE_VERIFY_FAILED. This matches the platform's own default.
+ASL_BASE = os.environ.get("ASL_API_BASE", "https://xtrace.aslbelgisi.uz").rstrip("/")
 ASL_INN = os.environ.get("ASL_INN", "").strip()
 ASL_API_KEY = os.environ.get("ASL_API_KEY", "").strip()
 TIMEOUT = int(os.environ.get("ASL_TIMEOUT", "60"))
