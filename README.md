@@ -15,23 +15,34 @@ the TracePro platform — its own tiny ASL client, credentials from env.
 | `sscc_contents(sscc)` | child KM codes inside a box + ownership verdict |
 | `mod_list()` | the company's MOD / business-place list |
 
+## Credentials — per call or env default
+
+Every tool accepts optional **`inn`** and **`api_key`** arguments. The agent
+passes them on each call, so a **different company or a rotated key works
+instantly — no server env change, no restart**. If omitted, the `ASL_INN` /
+`ASL_API_KEY` env values are used as a fallback default.
+
+(Note: the `api_key` then flows through the agent, so only give it to an agent
+you trust. For a personal agent this is the intended, flexible mode.)
+
 ## Config (env)
 
 | Var | Purpose |
 |---|---|
-| `ASL_INN` | the company INN (STIR) |
-| `ASL_API_KEY` | the company's ASL Business-User API key |
-| `ASL_API_BASE` | ASL base URL (default `https://aslbelgisi.uz`) |
 | `MCP_AUTH_TOKEN` | **required** — bearer token Hermes must send |
+| `ASL_INN` | *optional* default company INN (if not passed per call) |
+| `ASL_API_KEY` | *optional* default API key (if not passed per call) |
+| `ASL_API_BASE` | ASL base URL (default `https://aslbelgisi.uz`) |
 | `MCP_HOST` / `MCP_PORT` | bind (default `0.0.0.0` / `8900`) |
 
 ## Run
 
 ```bash
 pip install -r requirements.txt
-export ASL_INN=900071021
-export ASL_API_KEY=xxxxxxxx-xxxx-....
 export MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
+# optional defaults (callers can also pass inn/api_key per tool call):
+# export ASL_INN=900071021
+# export ASL_API_KEY=xxxxxxxx-xxxx-....
 python server.py
 ```
 
@@ -39,8 +50,7 @@ Or Docker:
 
 ```bash
 docker build -t aslbelgisi-mcp .
-docker run -p 8900:8900 \
-  -e ASL_INN=... -e ASL_API_KEY=... -e MCP_AUTH_TOKEN=... aslbelgisi-mcp
+docker run -p 8900:8900 -e MCP_AUTH_TOKEN=... aslbelgisi-mcp
 ```
 
 ## Connect Hermes

@@ -60,20 +60,28 @@ mcp = FastMCP("aslbelgisi")
 
 
 # ─────────────────────────── tiny ASL client ─────────────────────────────
-def _headers(accept_zip: bool = False) -> dict:
-    h = {"Authorization": f"Bearer {ASL_API_KEY}",
+def _headers(api_key: str, accept_zip: bool = False) -> dict:
+    h = {"Authorization": f"Bearer {api_key}",
          "Accept": "application/zip" if accept_zip else "application/json"}
     if not accept_zip:
         h["Content-Type"] = "application/json;charset=UTF-8"
     return h
 
 
-def _creds_ok() -> Optional[str]:
-    if not ASL_API_KEY:
-        return "ASL_API_KEY sozlanmagan (env)"
-    if not ASL_INN:
-        return "ASL_INN sozlanmagan (env)"
-    return None
+def _resolve(inn: str, api_key: str, need_inn: bool = False):
+    """Pick the credentials for this call, falling back to env defaults.
+
+    Hermes can pass `inn` / `api_key` on EVERY call — so a different company
+    or a rotated key works immediately, with no server env change and no
+    restart. If omitted, the ASL_INN / ASL_API_KEY env values are used.
+    Returns (inn, api_key, error_or_None)."""
+    rinn = (inn or "").strip() or ASL_INN
+    rkey = (api_key or "").strip() or ASL_API_KEY
+    if not rkey:
+        return "", "", "api_key berilmagan (ASL_API_KEY env ham sozlanmagan)"
+    if need_inn and not rinn:
+        return "", "", "inn berilmagan (ASL_INN env ham sozlanmagan)"
+    return rinn, rkey, None
 
 
 def _loc(value: Any) -> str:
@@ -125,10 +133,10 @@ def normalize_sscc(v: str) -> str:
     return v
 
 
-def _code_detail(code: str) -> dict:
+def _code_detail(api_key: str, code: str) -> dict:
     """POST /public/api/cod/private/codes — full detail for one code."""
     try:
-        r = requests.post(f"{COD}/private/codes", headers=_headers(),
+        r = requests.post(f"{COD}/private/codes", headers=_headers(api_key),
                           data=json.dumps({"codes": [code]}), timeout=TIMEOUT)
         if r.status_code not in (200, 201):
             return {"ok": False, "error": f"ASL HTTP {r.status_code}", "raw": r.text[:400]}
@@ -235,11 +243,14 @@ async def _in_thread(fn, *a):
 
 # ─────────────────────────────── tools ───────────────────────────────────
 @mcp.tool()
-async def km_info(codes: list[str]) -> dict:
+async def km_info(codes: list[str], inn: str = "", api_key: str = "") -> dict:
     """Full details for one or more KM (marking) codes: current owner, product,
-    status, aggregation (which box), dates. Up to 50 codes."""
+    status, aggregation (which box), dates. Up to 50 codes.
+
+    Pass the company `api_key` (and `inn`) to query a specific company; omit to
+    use the server's env defaults."""
     def _impl() -> dict:
-        err = _creds_ok()
+        _rinn, rkey, err = _resolve(inn, api_key)
         if err:
             return {"ok": False, "error": err}
         clean = [c.strip() for c in codes if c and c.strip()][:50]
@@ -247,7 +258,7 @@ async def km_info(codes: list[str]) -> dict:
             return {"ok": False, "error": "Kamida bitta KM kod kiriting"}
         results = []
         for c in clean:
-            det = _code_detail(c)
+            det = _code_detail(rkey, c)
             if not det.get("ok"):
                 results.append({"code": c, "found": False, "error": det.get("error")})
             else:
@@ -261,17 +272,18 @@ async def km_info(codes: list[str]) -> dict:
 
 
 @mcp.tool()
-async def km_owner(code: str) -> dict:
+async def km_owner(code: str, inn: str = "", api_key: str = "") -> dict:
     """Quick lookup — the CURRENT OWNER (INN + name), product and status of a
-    single KM code."""
+    single KM code. Pass `api_key` (and `inn`) for a specific company, or omit
+    to use the env defaults."""
     def _impl() -> dict:
-        err = _creds_ok()
+        _rinn, rkey, err = _resolve(inn, api_key)
         if err:
             return {"ok": False, "error": err}
         c = (code or "").strip()
         if not c:
             return {"ok": False, "error": "KM kod kiriting"}
-        det = _code_detail(c)
+        det = _code_detail(rkey, c)
         if not det.get("ok"):
             return {"ok": False, "code": c, "error": det.get("error")}
         p = _parse_code(det["raw"], c)
@@ -283,7 +295,7 @@ async def km_owner(code: str) -> dict:
 
 
 @mcp.tool()
-async def km_owners_table(codes: list[str]) -> dict:
+async def km_owners_table(codes: list[str], inn: str = "", api_key: str = "") -> dict:
     """Look up the OWNER of many KM codes and return a ready-to-save table.
 
     Built for the "Excel in → Excel out" flow: give it the list of codes and
@@ -292,9 +304,11 @@ async def km_owners_table(codes: list[str]) -> dict:
 
     Columns: Kod, GTIN, Mahsulot, Seriya, Status, Status (izoh), Egasi INN,
     Egasi nomi. Up to 300 codes per call (ASL is ~1 request per code, so large
-    batches are slow and rate-limited — chunk if you have more)."""
+    batches are slow and rate-limited — chunk if you have more).
+
+    Pass `api_key` (and `inn`) for a specific company, or omit for env defaults."""
     def _impl() -> dict:
-        err = _creds_ok()
+        _rinn, rkey, err = _resolve(inn, api_key)
         if err:
             return {"ok": False, "error": err}
         clean = [c.strip() for c in codes if c and c.strip()][:300]
@@ -305,7 +319,7 @@ async def km_owners_table(codes: list[str]) -> dict:
                    "Status (izoh)", "Egasi INN", "Egasi nomi"]
         rows: list[dict] = []
         for c in clean:
-            det = _code_detail(c)
+            det = _code_detail(rkey, c)
             if not det.get("ok"):
                 rows.append({"Kod": c, "GTIN": "", "Mahsulot": "", "Seriya": "",
                              "Status": "", "Status (izoh)": "", "Egasi INN": "",
@@ -331,17 +345,18 @@ async def km_owners_table(codes: list[str]) -> dict:
 
 
 @mcp.tool()
-async def sscc_contents(sscc: str) -> dict:
+async def sscc_contents(sscc: str, inn: str = "", api_key: str = "") -> dict:
     """List the child KM codes inside a box (SSCC) and verify it belongs to the
-    configured company. verdict = owned | forbidden | missing."""
+    company. verdict = owned | forbidden | missing. Pass `inn` + `api_key` for a
+    specific company, or omit for env defaults (both are needed here)."""
     def _impl() -> dict:
-        err = _creds_ok()
+        rinn, rkey, err = _resolve(inn, api_key, need_inn=True)
         if err:
             return {"ok": False, "error": err}
         canonical = normalize_sscc(sscc)
         try:
-            r = requests.post(f"{COD}/nested-codes/owner-check", headers=_headers(),
-                              data=json.dumps({"codes": [canonical], "ownerTin": ASL_INN}),
+            r = requests.post(f"{COD}/nested-codes/owner-check", headers=_headers(rkey),
+                              data=json.dumps({"codes": [canonical], "ownerTin": rinn}),
                               timeout=TIMEOUT)
         except requests.RequestException as e:
             return {"ok": False, "error": f"tarmoq xatosi: {e}"}
@@ -362,15 +377,16 @@ async def sscc_contents(sscc: str) -> dict:
 
 
 @mcp.tool()
-async def mod_list() -> dict:
-    """List the company's MOD / business-place entries registered in ASL."""
+async def mod_list(inn: str = "", api_key: str = "") -> dict:
+    """List the company's MOD / business-place entries registered in ASL.
+    Pass `api_key` for a specific company, or omit for the env default."""
     def _impl() -> dict:
-        err = _creds_ok()
+        _rinn, rkey, err = _resolve(inn, api_key)
         if err:
             return {"ok": False, "error": err}
         for url in (f"{ASL_BASE}/api/v2/participants/mod",):
             try:
-                r = requests.get(url, headers=_headers(), timeout=TIMEOUT)
+                r = requests.get(url, headers=_headers(rkey), timeout=TIMEOUT)
                 if r.status_code in (200, 201):
                     data = r.json()
                     items = data if isinstance(data, list) else (data or {}).get("result") or (data or {}).get("data") or []
@@ -389,6 +405,8 @@ async def gtin_ostatok(
     package_types: Optional[list[str]] = None,
     emission_date_from: str = "",
     emission_date_to: str = "",
+    inn: str = "",
+    api_key: str = "",
 ) -> dict:
     """How much of a product (by GTIN) remains — the "ostatok" check.
 
@@ -402,7 +420,7 @@ async def gtin_ostatok(
     date window.
     """
     def _impl() -> dict:
-        err = _creds_ok()
+        _rinn, rkey, err = _resolve(inn, api_key)
         if err:
             return {"ok": False, "error": err}
         g = (gtin or "").strip()
@@ -418,7 +436,7 @@ async def gtin_ostatok(
 
         # register
         try:
-            r = requests.post(f"{COD}/exports", headers=_headers(),
+            r = requests.post(f"{COD}/exports", headers=_headers(rkey),
                               data=json.dumps(payload), timeout=TIMEOUT)
         except requests.RequestException as e:
             return {"ok": False, "error": f"tarmoq xatosi: {e}"}
@@ -433,7 +451,7 @@ async def gtin_ostatok(
         for _ in range(36):
             try:
                 st = requests.get(f"{COD}/exports/{export_id}/status",
-                                 headers=_headers(), timeout=TIMEOUT)
+                                 headers=_headers(rkey), timeout=TIMEOUT)
                 raw = st.json() if st.headers.get("content-type", "").startswith("application/json") else st.text
                 status_value = (raw.get("status") if isinstance(raw, dict) else str(raw)).strip().upper().strip('"')
                 if status_value in ("SUCCESS", "ERROR"):
@@ -452,7 +470,7 @@ async def gtin_ostatok(
         # result (zip → json)
         try:
             res = requests.get(f"{COD}/exports/{export_id}/result",
-                              headers=_headers(accept_zip=True), timeout=TIMEOUT)
+                              headers=_headers(rkey, accept_zip=True), timeout=TIMEOUT)
         except requests.RequestException as e:
             return {"ok": False, "error": f"result tarmoq xatosi: {e}"}
         if res.status_code not in (200, 201):
@@ -519,8 +537,9 @@ def main() -> None:
     port = int(os.environ.get("MCP_PORT", "8900"))
     if not os.environ.get("MCP_AUTH_TOKEN", "").strip():
         print("WARNING: MCP_AUTH_TOKEN not set — server is UNAUTHENTICATED.")
-    if _creds_ok():
-        print(f"WARNING: {_creds_ok()} — tools will return an error until set.")
+    if not ASL_API_KEY:
+        print("NOTE: ASL_API_KEY env not set — callers must pass api_key (and "
+              "inn) on each tool call.")
     uvicorn.run(_build_app(), host=host, port=port)
 
 
