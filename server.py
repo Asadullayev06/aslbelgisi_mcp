@@ -58,6 +58,28 @@ STATUS_LABELS = {
 
 mcp = FastMCP("aslbelgisi")
 
+# Behind a public reverse proxy (Cloudflare tunnel → Coolify) the incoming
+# Host header is the public domain, which the MCP SDK's DNS-rebinding guard
+# rejects with "421 Invalid Host header" unless whitelisted. That guard only
+# protects a browser on the LAN from being tricked into hitting a localhost
+# MCP — behind a public proxy with bearer auth it adds nothing. So disable it
+# by default; set MCP_ALLOWED_HOSTS="host1,host2" to re-enable with a list.
+try:
+    from mcp.server.transport_security import TransportSecuritySettings
+    _allowed = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    if _allowed:
+        _hosts = _allowed + ["localhost", "127.0.0.1"]
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=_hosts,
+            allowed_origins=[f"https://{h}" for h in _allowed] + [f"http://{h}" for h in _hosts],
+        )
+    else:
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False)
+except Exception as _e:  # older/newer SDK without this knob — don't crash
+    print(f"NOTE: could not set transport_security: {_e}")
+
 
 # ─────────────────────────── tiny ASL client ─────────────────────────────
 def _headers(api_key: str, accept_zip: bool = False) -> dict:
