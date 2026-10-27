@@ -34,6 +34,14 @@ you trust. For a personal agent this is the intended, flexible mode.)
 | `ASL_API_KEY` | *optional* default API key (if not passed per call) |
 | `ASL_API_BASE` | ASL base URL (default `https://xtrace.aslbelgisi.uz` — valid cert) |
 | `MCP_HOST` / `MCP_PORT` | bind (default `0.0.0.0` / `8900`) |
+| `MCP_OUTPUT_DIR` | where generated .xlsx files are written (default `/tmp/aslbelgisi`) |
+| `MCP_PUBLIC_URL` | public base used to build `download_url` (e.g. `https://aslbelgisi.andromeda-ai.uz`) |
+
+**File output:** `km_owners_table` writes a real `.xlsx` to `MCP_OUTPUT_DIR` and
+returns its `file_path` plus (if `MCP_PUBLIC_URL` is set) a `download_url`. The
+download endpoint `GET /files/<name>` requires the same `Authorization: Bearer`
+header. If Hermes shares the volume, use `file_path`; otherwise fetch
+`download_url` with the bearer header.
 
 ## Run
 

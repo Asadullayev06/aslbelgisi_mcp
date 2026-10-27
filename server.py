@@ -34,6 +34,8 @@ import os
 import time
 import zipfile
 from collections import Counter
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import anyio
@@ -47,6 +49,10 @@ from mcp.server.fastmcp import FastMCP
 ASL_BASE = os.environ.get("ASL_API_BASE", "https://xtrace.aslbelgisi.uz").rstrip("/")
 ASL_INN = os.environ.get("ASL_INN", "").strip()
 ASL_API_KEY = os.environ.get("ASL_API_KEY", "").strip()
+# Where generated files are written, and the public base to build their
+# download URLs from (e.g. https://aslbelgisi.andromeda-ai.uz).
+OUTPUT_DIR = Path(os.environ.get("MCP_OUTPUT_DIR", "/tmp/aslbelgisi")).resolve()
+PUBLIC_URL = os.environ.get("MCP_PUBLIC_URL", "").rstrip("/")
 TIMEOUT = int(os.environ.get("ASL_TIMEOUT", "60"))
 
 COD = f"{ASL_BASE}/public/api/cod"
@@ -266,6 +272,47 @@ async def _in_thread(fn, *a):
     return await anyio.to_thread.run_sync(fn, *a)
 
 
+def _save_xlsx(headers: list[str], rows: list[dict], stem: str) -> dict:
+    """Write rows to a timestamped .xlsx under OUTPUT_DIR. Returns
+    {file_path, filename, download_url?} or {save_error}. Code/GTIN columns are
+    text-formatted so Excel keeps leading zeros."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{stem}_{ts}.xlsx"
+        path = OUTPUT_DIR / filename
+
+        wb = Workbook(); ws = wb.active; ws.title = "Egalari"
+        ws.append(headers)
+        hf = Font(bold=True, color="FFFFFF"); fill = PatternFill("solid", fgColor="1F6F5C")
+        for i in range(1, len(headers) + 1):
+            c = ws.cell(row=1, column=i); c.font = hf; c.fill = fill
+        ws.freeze_panes = "A2"
+        # text format on Kod (1) and GTIN (2)
+        for col in ("A", "B"):
+            ws.column_dimensions[col].number_format = "@"
+        for r in rows:
+            ri = ws.max_row + 1
+            ws.append([str(r.get(h, "")) for h in headers])
+            ws.cell(row=ri, column=1).number_format = "@"
+            ws.cell(row=ri, column=2).number_format = "@"
+        widths = [36, 16, 30, 14, 16, 18, 14, 30]
+        for i, wdt in enumerate(widths[:len(headers)], start=1):
+            ws.column_dimensions[get_column_letter(i)].width = wdt
+        wb.save(str(path))
+
+        out = {"file_path": str(path), "filename": filename}
+        if PUBLIC_URL:
+            out["download_url"] = f"{PUBLIC_URL}/files/{filename}"
+        return out
+    except Exception as e:
+        return {"save_error": f"faylni saqlab bo'lmadi: {e}"}
+
+
 # ─────────────────────────────── tools ───────────────────────────────────
 @mcp.tool()
 async def km_info(codes: list[str], inn: str = "", api_key: str = "") -> dict:
@@ -331,6 +378,10 @@ async def km_owners_table(codes: list[str], inn: str = "", api_key: str = "") ->
     Egasi nomi. Up to 300 codes per call (ASL is ~1 request per code, so large
     batches are slow and rate-limited — chunk if you have more).
 
+    Writes a real **.xlsx file** to the server and returns its `file_path` and
+    (if MCP_PUBLIC_URL is set) a `download_url` — hand either to a file-sending
+    tool. Also returns `rows` and `csv` for convenience.
+
     Pass `api_key` (and `inn`) for a specific company, or omit for env defaults."""
     def _impl() -> dict:
         _rinn, rkey, err = _resolve(inn, api_key)
@@ -364,8 +415,12 @@ async def km_owners_table(codes: list[str], inn: str = "", api_key: str = "") ->
         w.writeheader()
         w.writerows(rows)
         found = sum(1 for r in rows if r["Status"])
-        return {"ok": True, "total": len(rows), "found": found,
-                "columns": headers, "rows": rows, "csv": buf.getvalue()}
+
+        saved = _save_xlsx(headers, rows, "km_egalari")
+        out = {"ok": True, "total": len(rows), "found": found,
+               "columns": headers, "rows": rows, "csv": buf.getvalue()}
+        out.update(saved)   # file_path, filename, download_url (or save_error)
+        return out
     return await _in_thread(_impl)
 
 
@@ -553,6 +608,26 @@ def _build_app():
     async def health(_req):
         return JSONResponse({"ok": True, "service": "aslbelgisi-mcp"})
     app.add_route("/health", health, methods=["GET"])
+
+    # Download a generated file (bearer-auth via the middleware above). Hermes
+    # fetches download_url with the same Authorization header it uses for /sse.
+    from starlette.responses import FileResponse
+
+    async def serve_file(request):
+        name = request.path_params.get("name", "")
+        if not name or "/" in name or "\\" in name or ".." in name:
+            return JSONResponse({"detail": "bad name"}, status_code=400)
+        fp = (OUTPUT_DIR / name).resolve()
+        try:
+            fp.relative_to(OUTPUT_DIR)
+        except ValueError:
+            return JSONResponse({"detail": "forbidden"}, status_code=403)
+        if not fp.is_file():
+            return JSONResponse({"detail": "not found"}, status_code=404)
+        return FileResponse(
+            str(fp), filename=name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    app.add_route("/files/{name}", serve_file, methods=["GET"])
     return app
 
 
